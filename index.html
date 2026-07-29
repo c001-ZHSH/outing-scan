@@ -36,8 +36,18 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🎫 學生外出掃描</h1>
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+    <h1 style="margin:2px 0;">🎫 學生外出掃描</h1>
+    <a id="adminLink" class="btn ghost" target="_blank" rel="noopener" style="font-size:12px; padding:7px 10px; text-decoration:none;">⚙️ 管理／電腦版</a>
+  </div>
   <div class="sub">相機會一直開著，連續掃、不用重按</div>
+
+  <div id="desktopLanding" style="display:none; background:#1e293b; border-radius:14px; padding:22px; margin-top:8px;">
+    <div style="font-size:17px; font-weight:700; margin-bottom:8px;">偵測到電腦 💻</div>
+    <div class="sub" style="margin-bottom:16px;">電腦版有 USB 掃描器即時輸入與完整管理後台，建議使用電腦版。</div>
+    <a class="btn" id="pcLink" target="_top" style="display:inline-block; text-decoration:none;">💻 進入電腦版（掃描器＋管理後台）</a>
+    <div style="margin-top:14px;"><button class="btn ghost" onclick="useCameraHere()">或用這台電腦的相機掃描</button></div>
+  </div>
 
   <div class="frame">
     <video id="video" muted playsinline autoplay></video>
@@ -56,6 +66,9 @@
 <script>
 // 手機專用「匿名端點」網址（以通行碼驗證，可連續查詢）
 var APP_URL = "https://script.google.com/macros/s/AKfycbxNgiG6CP8SW81SpAJDFummkLbm5_0BmbVjoCeXddHzErYDzDopzEm8g6bC23rOtTJh/exec";
+// 電腦版／管理後台（Google 登入）；透過帳號選擇器確保挑到學校帳號
+var APPSCRIPT_URL = "https://script.google.com/a/macros/mail2.chshs.ntpc.edu.tw/s/AKfycbxxdskve4W6xyWuqmtu9guQKtSLJRZFzydgfodqqboqE-ajQ3zDq1aVya-mnI6dIqO2/exec";
+var ADMIN_URL = "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(APPSCRIPT_URL);
 
 var KEY = localStorage.getItem('scanKey') || '';
 var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null, resumeTimer=null, SCANDB=null, refreshSet=false;
@@ -267,6 +280,30 @@ function handleResult(data){
   if (data.banned){ soundWarn(); scheduleResume(2400); }        // 禁止者：畫面凍久一點、結果停留
   else { soundPass(); autoHide(); scheduleResume(1200); }        // 可外出者：快速恢復、結果淡出
 }
+
+// ---- 單一入口：依裝置導向（手機→相機掃描；電腦→電腦版） ----
+function isMobile(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+         (('ontouchstart' in window) && Math.min(screen.width, screen.height) < 820);
+}
+function useCameraHere(){
+  document.getElementById('desktopLanding').style.display='none';
+  document.querySelector('.frame').style.display='inline-block';
+  document.querySelector('.footer').style.display='block';
+  document.getElementById('result').style.display='';   // 回復由 class 控制顯示
+  say('請按「開始掃描」並允許使用相機');
+}
+(function initEntry(){
+  var a=document.getElementById('adminLink'); if(a) a.href=ADMIN_URL;
+  var p=document.getElementById('pcLink'); if(p) p.href=ADMIN_URL;
+  if (!isMobile()){
+    document.getElementById('desktopLanding').style.display='block';
+    document.querySelector('.frame').style.display='none';
+    document.getElementById('result').style.display='none';
+    document.querySelector('.footer').style.display='none';
+    say('偵測到電腦，請選擇進入方式');
+  }
+})();
 </script>
 </body>
 </html>
