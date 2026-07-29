@@ -8,21 +8,36 @@
 <style>
   * { box-sizing:border-box; }
   body { font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; margin:0; background:#0f172a; color:#e2e8f0; }
-  .wrap { max-width:640px; margin:0 auto; padding:16px; text-align:center; }
-  h1 { font-size:20px; margin:8px 0 4px; }
-  .sub { color:#94a3b8; font-size:13px; margin-bottom:12px; }
-  #video { width:100%; max-width:560px; aspect-ratio:3/4; background:#111; border-radius:16px; object-fit:cover; }
-  #status { margin:12px 0; font-size:15px; color:#93c5fd; min-height:22px; }
-  .btn { border:0; border-radius:14px; padding:18px 26px; font-size:20px; font-weight:800; cursor:pointer; background:#2563eb; color:#fff; }
+  .wrap { max-width:640px; margin:0 auto; padding:14px; text-align:center; }
+  h1 { font-size:19px; margin:6px 0 2px; }
+  .sub { color:#94a3b8; font-size:13px; margin-bottom:10px; }
   .frame { position:relative; display:inline-block; width:100%; max-width:560px; }
-  .reticle { position:absolute; left:8%; right:8%; top:38%; height:24%; border:3px solid rgba(147,197,253,.9); border-radius:12px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.15) inset; }
+  #video { width:100%; aspect-ratio:3/4; background:#111; border-radius:16px; object-fit:cover; }
+  .reticle { position:absolute; left:8%; right:8%; top:40%; height:20%; border:3px solid rgba(147,197,253,.9); border-radius:12px; pointer-events:none; }
   .start { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); border-radius:16px; }
+  .btn { border:0; border-radius:14px; padding:16px 24px; font-size:19px; font-weight:800; cursor:pointer; background:#2563eb; color:#fff; }
+  .btn.ghost { background:#334155; font-size:14px; padding:9px 14px; font-weight:600; }
+  #status { margin:8px 0; font-size:13px; color:#64748b; min-height:18px; }
+
+  #result { display:none; border-radius:16px; padding:18px; margin-top:12px; text-align:center; }
+  #result.show { display:block; }
+  #result.ok   { background:#064e3b; border:3px solid #10b981; }
+  #result.ban  { background:#7f1d1d; border:3px solid #ef4444; }
+  #result.none { background:#3f3f46; border:3px solid #a1a1aa; }
+  #result.wait { background:#1e293b; border:3px solid #334155; }
+  .verdict { font-size:30px; font-weight:900; }
+  .name { font-size:28px; font-weight:900; margin-top:4px; }
+  .meta { font-size:16px; color:#e5e7eb; margin-top:4px; }
+  .notes { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+  .chip { font-weight:800; padding:8px 15px; border-radius:999px; font-size:19px; }
+  .stamp { font-size:12px; color:#cbd5e1; margin-top:10px; }
+  .footer { margin-top:12px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>🎫 學生外出掃描</h1>
-  <div class="sub">將學生證／身分證的條碼對準框內，會自動辨識並登記</div>
+  <div class="sub">相機會一直開著，連續掃、不用重按</div>
 
   <div class="frame">
     <video id="video" muted playsinline autoplay></video>
@@ -30,59 +45,109 @@
     <div class="start" id="startBox"><button class="btn" onclick="startScan()">▶ 開始掃描</button></div>
   </div>
 
+  <div id="result"></div>
+
+  <div class="footer">
+    <button class="btn ghost" onclick="setKey()">🔑 設定通行碼</button>
+  </div>
   <div id="status">請按「開始掃描」並允許使用相機</div>
 </div>
 
 <script>
-// 系統（Apps Script）網址：掃到號碼後用 POST 送回這裡查詢＋登記
-var APP_URL = "https://script.google.com/a/macros/mail2.chshs.ntpc.edu.tw/s/AKfycbxxdskve4W6xyWuqmtu9guQKtSLJRZFzydgfodqqboqE-ajQ3zDq1aVya-mnI6dIqO2/exec";
+// 手機專用「匿名端點」網址（以通行碼驗證，可連續查詢）
+var APP_URL = "https://script.google.com/macros/s/AKfycbxNgiG6CP8SW81SpAJDFummkLbm5_0BmbVjoCeXddHzErYDzDopzEm8g6bC23rOtTJh/exec";
 
-var reader = null, lastCode='', lastTime=0, submitting=false;
+var KEY = localStorage.getItem('scanKey') || '';
+var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null;
+
 function say(t){ document.getElementById('status').textContent = t; }
-function beep(){ try{ var C=window.__a||(window.__a=new (window.AudioContext||window.webkitAudioContext)());
-  var o=C.createOscillator(),g=C.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(C.destination);
-  g.gain.setValueAtTime(0.3,C.currentTime); o.start(); o.stop(C.currentTime+0.12);}catch(e){} }
 
+// ---- 音效 ----
+function actx(){ return window.__a || (window.__a = new (window.AudioContext||window.webkitAudioContext)()); }
+function tone(freq,dur,type,when,gain){ try{ var C=actx(),o=C.createOscillator(),g=C.createGain();
+  o.type=type||'sine'; o.frequency.value=freq; o.connect(g); g.connect(C.destination);
+  var t=C.currentTime+(when||0); g.gain.setValueAtTime(gain||0.3,t); o.start(t); o.stop(t+dur);}catch(e){} }
+function beep(){ tone(1000,0.08,'sine',0,0.25); }
+function soundPass(){ tone(880,0.12,'sine',0,0.3); }
+function soundWarn(){ for(var i=0;i<4;i++){ tone(240,0.16,'square',i*0.2,0.35); tone(360,0.16,'square',i*0.2+0.02,0.3);} }
+function soundNone(){ tone(160,0.35,'sawtooth',0,0.25); }
+
+function textColorFor(hex){ var c=String(hex||'').replace('#',''); if(c.length===3){c=c[0]+c[0]+c[1]+c[1]+c[2]+c[2];}
+  if(c.length<6) return '#111827'; var r=parseInt(c.substr(0,2),16),g=parseInt(c.substr(2,2),16),b=parseInt(c.substr(4,2),16);
+  return ((0.299*r+0.587*g+0.114*b)/255)>0.62 ? '#111827' : '#ffffff'; }
+function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+function setKey(){
+  var k = prompt('請輸入手機掃描通行碼（向管理者索取）：', KEY||'');
+  if (k!=null){ KEY=k.trim(); localStorage.setItem('scanKey', KEY); say('通行碼已儲存'); }
+}
+
+// ---- 啟動相機（連續）----
 function startScan(){
-  beep();                                   // 解鎖音效（使用者手勢）
+  beep();
+  if (!KEY){ setKey(); if(!KEY){ say('請先設定通行碼'); return; } }
   if (typeof ZXing === 'undefined'){ say('掃描元件載入中，請幾秒後再按一次…'); return; }
   if (!reader) reader = new ZXing.BrowserMultiFormatReader();
   say('正在啟動相機…');
-  var p = reader.decodeFromConstraints(
-    { video:{ facingMode:{ ideal:'environment' } } }, 'video',
-    function(result, err){ if (result) onDecode(result.getText()); }
-  );
-  if (p && p.then){
-    p.then(function(){ document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識'); })
-     .catch(function(e){ say('無法開啟相機（'+((e&&e.name)||e)+'）。請確認已允許相機權限，再按一次開始。'); });
-  } else {
-    document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識');
-  }
+  var p = reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } } }, 'video',
+    function(result, err){ if (result) onDecode(result.getText()); });
+  if (p && p.then){ p.then(function(){ document.getElementById('startBox').style.display='none'; say('相機已開啟，連續掃描中'); })
+                     .catch(function(e){ say('無法開啟相機（'+((e&&e.name)||e)+'），請確認已允許相機權限，再按一次開始。'); }); }
+  else { document.getElementById('startBox').style.display='none'; say('相機已開啟，連續掃描中'); }
 }
 
 function onDecode(text){
-  var code = String(text||'').trim();
-  if (!code || submitting) return;
+  var code = String(text||'').trim(); if(!code) return;
   var now = Date.now();
-  if (code===lastCode && (now-lastTime)<3000) return;   // 避免同一碼連續觸發
-  lastCode=code; lastTime=now; submitting=true;
+  if (busy) return;
+  if (code===lastCode && (now-lastTime)<3500) return;   // 同一張卡短時間不重複
+  lastCode=code; lastTime=now; busy=true;
   beep();
-  say('已掃到，登記中…');
-  try { if (reader) reader.reset(); } catch(e){}
-  submitCode(code);
+  showWait();
+  jsonp({ code:code, key:KEY }, function(data){
+    handleResult(data);
+    setTimeout(function(){ busy=false; }, 1400);
+  });
 }
 
-// 用 POST 把號碼送回系統（號碼不會出現在網址列）
-function submitCode(code){
-  var f=document.createElement('form'); f.method='POST'; f.action=APP_URL; f.style.display='none';
-  var a=document.createElement('input'); a.name='code'; a.value=code; f.appendChild(a);
-  var b=document.createElement('input'); b.name='back'; b.value=location.origin+location.pathname; f.appendChild(b);
-  document.body.appendChild(f); f.submit();
+function jsonp(params, cb){
+  var s=document.createElement('script');
+  var name='cb_'+Date.now()+'_'+Math.floor(Math.random()*1e6), done=false;
+  function cleanup(){ try{ delete window[name]; }catch(e){ window[name]=undefined; } if(s.parentNode) s.parentNode.removeChild(s); }
+  window[name]=function(d){ if(done)return; done=true; cleanup(); cb(d); };
+  s.onerror=function(){ if(done)return; done=true; cleanup(); cb({ok:false,reason:'network'}); };
+  var q=[]; for(var k in params){ q.push(encodeURIComponent(k)+'='+encodeURIComponent(params[k])); }
+  s.src=APP_URL+'?'+q.join('&')+'&callback='+name;
+  document.body.appendChild(s);
+  setTimeout(function(){ if(!done){ done=true; cleanup(); cb({ok:false,reason:'timeout'}); } }, 12000);
 }
 
-// 注意：iPhone 只允許「使用者點擊」後才啟動相機，
-// 因此不做自動啟動（自動啟動會被判為未授權，反而卡住後續的手動啟動）。
-// 回到本頁時，請按「開始掃描」即可（相機權限已授權過，不會再問）。
+function showWait(){ var r=document.getElementById('result'); r.className='show wait'; r.innerHTML='<div class="verdict">查詢中…</div>'; }
+function autoHide(){ if(hideTimer) clearTimeout(hideTimer); hideTimer=setTimeout(function(){ document.getElementById('result').className=''; }, 3500); }
+
+function handleResult(data){
+  var r=document.getElementById('result');
+  if (!data || data.ok===false){
+    if (data && data.reason==='key'){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼錯誤</div><div class="meta">請重新設定通行碼</div>'; soundNone(); setTimeout(setKey, 400); return; }
+    r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); return;
+  }
+  if (!data.found){
+    r.className='show none'; r.innerHTML='<div class="verdict">❓ 查無此學生</div><div class="meta">'+esc(data.code||'')+'</div><div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
+    soundNone(); autoHide(); return;
+  }
+  var s=data.student;
+  var sub=esc(s.class)+'　座號 '+esc(s.seat)+'　學號 '+esc(s.sno);
+  var html='';
+  if (data.banned){ r.className='show ban'; html+='<div class="verdict">⛔ 禁止外出'+(data.ruleName?('　<span style="font-size:18px">'+esc(data.ruleName)+'</span>'):'')+'</div>'; }
+  else { r.className='show ok'; html+='<div class="verdict">✅ 可外出</div>'; }
+  html+='<div class="name">'+esc(s.name)+'</div><div class="meta">'+sub+'</div>';
+  if (data.notes && data.notes.length){ html+='<div class="notes">';
+    data.notes.forEach(function(n){ var col=n.color||'#f59e0b'; html+='<span class="chip" style="background:'+col+';color:'+textColorFor(col)+'">🏷️ '+esc(n.name)+'</span>'; });
+    html+='</div>'; }
+  html+='<div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
+  r.innerHTML=html;
+  if (data.banned) soundWarn(); else { soundPass(); autoHide(); }   // 禁止者停留，可外出者自動淡出
+}
 </script>
 </body>
 </html>
