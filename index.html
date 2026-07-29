@@ -58,9 +58,35 @@
 var APP_URL = "https://script.google.com/macros/s/AKfycbxNgiG6CP8SW81SpAJDFummkLbm5_0BmbVjoCeXddHzErYDzDopzEm8g6bC23rOtTJh/exec";
 
 var KEY = localStorage.getItem('scanKey') || '';
-var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null;
+var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null, resumeTimer=null;
 
 function say(t){ document.getElementById('status').textContent = t; }
+
+// 只辨識學生證／身分證常見的條碼類型，加快速度
+function makeReader(){
+  var hints = null;
+  try {
+    hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.CODABAR
+    ]);
+  } catch(e){ hints = null; }
+  var r = hints ? new ZXing.BrowserMultiFormatReader(hints) : new ZXing.BrowserMultiFormatReader();
+  try { r.timeBetweenDecodingAttempts = 100; } catch(e){}   // 更頻繁嘗試，反應更快
+  return r;
+}
+
+// 掃到就凍結畫面（給「已擷取」回饋）；顯示完再恢復即時畫面
+function freezeFrame(){ var v=document.getElementById('video'); try{ v.pause(); }catch(e){} }
+function scheduleResume(delay){
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(function(){
+    var v=document.getElementById('video'); try{ v.play(); }catch(e){}
+    busy = false;
+  }, delay);
+}
 
 // ---- 音效 ----
 function actx(){ return window.__a || (window.__a = new (window.AudioContext||window.webkitAudioContext)()); }
@@ -87,7 +113,7 @@ function startScan(){
   beep();
   if (!KEY){ setKey(); if(!KEY){ say('請先設定通行碼'); return; } }
   if (typeof ZXing === 'undefined'){ say('掃描元件載入中，請幾秒後再按一次…'); return; }
-  if (!reader) reader = new ZXing.BrowserMultiFormatReader();
+  if (!reader) reader = makeReader();
   say('正在啟動相機…');
   var p = reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } } }, 'video',
     function(result, err){ if (result) onDecode(result.getText()); });
@@ -103,10 +129,10 @@ function onDecode(text){
   if (code===lastCode && (now-lastTime)<3500) return;   // 同一張卡短時間不重複
   lastCode=code; lastTime=now; busy=true;
   beep();
+  freezeFrame();          // 凍結畫面，給「已擷取」回饋
   showWait();
   jsonp({ code:code, key:KEY }, function(data){
-    handleResult(data);
-    setTimeout(function(){ busy=false; }, 1400);
+    handleResult(data);   // 內含 scheduleResume：顯示後恢復即時畫面
   });
 }
 
@@ -128,12 +154,12 @@ function autoHide(){ if(hideTimer) clearTimeout(hideTimer); hideTimer=setTimeout
 function handleResult(data){
   var r=document.getElementById('result');
   if (!data || data.ok===false){
-    if (data && data.reason==='key'){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼錯誤</div><div class="meta">請重新設定通行碼</div>'; soundNone(); setTimeout(setKey, 400); return; }
-    r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); return;
+    if (data && data.reason==='key'){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼錯誤</div><div class="meta">請重新設定通行碼</div>'; soundNone(); scheduleResume(1500); setTimeout(setKey, 400); return; }
+    r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); scheduleResume(1200); return;
   }
   if (!data.found){
     r.className='show none'; r.innerHTML='<div class="verdict">❓ 查無此學生</div><div class="meta">'+esc(data.code||'')+'</div><div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
-    soundNone(); autoHide(); return;
+    soundNone(); autoHide(); scheduleResume(1400); return;
   }
   var s=data.student;
   var sub=esc(s.class)+'　座號 '+esc(s.seat)+'　學號 '+esc(s.sno);
@@ -146,7 +172,8 @@ function handleResult(data){
     html+='</div>'; }
   html+='<div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
   r.innerHTML=html;
-  if (data.banned) soundWarn(); else { soundPass(); autoHide(); }   // 禁止者停留，可外出者自動淡出
+  if (data.banned){ soundWarn(); scheduleResume(2400); }        // 禁止者：畫面凍久一點、結果停留
+  else { soundPass(); autoHide(); scheduleResume(1200); }        // 可外出者：快速恢復、結果淡出
 }
 </script>
 </body>
