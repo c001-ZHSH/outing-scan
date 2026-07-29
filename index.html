@@ -80,17 +80,9 @@ function submitCode(code){
   document.body.appendChild(f); f.submit();
 }
 
-// 回到本頁時自動嘗試啟動相機（相機權限已授權過就不會再問）
-window.addEventListener('load', function(){
-  setTimeout(function(){ try { startScanQuiet(); } catch(e){} }, 300);
-});
-function startScanQuiet(){
-  if (typeof ZXing === 'undefined' || !navigator.mediaDevices) return;
-  if (!reader) reader = new ZXing.BrowserMultiFormatReader();
-  var p = reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } } }, 'video',
-    function(result, err){ if (result) onDecode(result.getText()); });
-  if (p && p.then){ p.then(function(){ document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識'); }).catch(function(){ /* 需手勢，保留開始鈕 */ }); }
-}
+// 注意：iPhone 只允許「使用者點擊」後才啟動相機，
+// 因此不做自動啟動（自動啟動會被判為未授權，反而卡住後續的手動啟動）。
+// 回到本頁時，請按「開始掃描」即可（相機權限已授權過，不會再問）。
 </script>
 </body>
 </html>
