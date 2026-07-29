@@ -8,30 +8,30 @@
 <style>
   * { box-sizing:border-box; }
   body { font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; margin:0; background:#0f172a; color:#e2e8f0; }
-  .wrap { max-width:640px; margin:0 auto; padding:14px; text-align:center; }
-  h1 { font-size:19px; margin:6px 0 2px; }
-  .sub { color:#94a3b8; font-size:13px; margin-bottom:10px; }
+  .wrap { max-width:640px; margin:0 auto; padding:10px 12px; text-align:center; }
+  h1 { font-size:17px; margin:2px 0 1px; }
+  .sub { color:#94a3b8; font-size:12px; margin-bottom:8px; }
   .frame { position:relative; display:inline-block; width:100%; max-width:560px; }
-  #video { width:100%; aspect-ratio:3/4; background:#111; border-radius:16px; object-fit:cover; }
-  .reticle { position:absolute; left:8%; right:8%; top:40%; height:20%; border:3px solid rgba(147,197,253,.9); border-radius:12px; pointer-events:none; }
+  #video { width:100%; aspect-ratio:3/4; max-height:42vh; background:#111; border-radius:14px; object-fit:cover; }
+  .reticle { position:absolute; left:10%; right:10%; top:40%; height:20%; border:3px solid rgba(147,197,253,.9); border-radius:12px; pointer-events:none; }
   .start { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); border-radius:16px; }
   .btn { border:0; border-radius:14px; padding:16px 24px; font-size:19px; font-weight:800; cursor:pointer; background:#2563eb; color:#fff; }
   .btn.ghost { background:#334155; font-size:14px; padding:9px 14px; font-weight:600; }
   #status { margin:8px 0; font-size:13px; color:#64748b; min-height:18px; }
 
-  #result { display:none; border-radius:16px; padding:18px; margin-top:12px; text-align:center; }
+  #result { display:none; border-radius:14px; padding:12px; margin-top:10px; text-align:center; }
   #result.show { display:block; }
   #result.ok   { background:#064e3b; border:3px solid #10b981; }
   #result.ban  { background:#7f1d1d; border:3px solid #ef4444; }
   #result.none { background:#3f3f46; border:3px solid #a1a1aa; }
   #result.wait { background:#1e293b; border:3px solid #334155; }
-  .verdict { font-size:30px; font-weight:900; }
-  .name { font-size:28px; font-weight:900; margin-top:4px; }
-  .meta { font-size:16px; color:#e5e7eb; margin-top:4px; }
-  .notes { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
-  .chip { font-weight:800; padding:8px 15px; border-radius:999px; font-size:19px; }
-  .stamp { font-size:12px; color:#cbd5e1; margin-top:10px; }
-  .footer { margin-top:12px; }
+  .verdict { font-size:26px; font-weight:900; }
+  .name { font-size:24px; font-weight:900; margin-top:2px; }
+  .meta { font-size:15px; color:#e5e7eb; margin-top:3px; }
+  .notes { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+  .chip { font-weight:800; padding:7px 14px; border-radius:999px; font-size:18px; }
+  .stamp { font-size:12px; color:#cbd5e1; margin-top:8px; }
+  .footer { margin-top:10px; }
 </style>
 </head>
 <body>
@@ -88,9 +88,16 @@ function scheduleResume(delay){
   }, delay);
 }
 
-// ---- 音效 ----
-function actx(){ return window.__a || (window.__a = new (window.AudioContext||window.webkitAudioContext)()); }
-function tone(freq,dur,type,when,gain){ try{ var C=actx(),o=C.createOscillator(),g=C.createGain();
+// ---- 音效（iPhone 需在使用者點擊時「解鎖」音訊）----
+function actx(){ if(!window.__a){ try{ window.__a = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return window.__a; }
+function unlockAudio(){
+  var C=actx(); if(!C) return;
+  try { if (C.state==='suspended') C.resume(); } catch(e){}
+  try { var b=C.createBuffer(1,1,22050), s=C.createBufferSource(); s.buffer=b; s.connect(C.destination); s.start(0); } catch(e){}  // 觸發解鎖
+}
+function tone(freq,dur,type,when,gain){ var C=actx(); if(!C) return;
+  try { if (C.state==='suspended') C.resume(); } catch(e){}
+  try{ var o=C.createOscillator(),g=C.createGain();
   o.type=type||'sine'; o.frequency.value=freq; o.connect(g); g.connect(C.destination);
   var t=C.currentTime+(when||0); g.gain.setValueAtTime(gain||0.3,t); o.start(t); o.stop(t+dur);}catch(e){} }
 function beep(){ tone(1000,0.08,'sine',0,0.25); }
@@ -110,6 +117,7 @@ function setKey(){
 
 // ---- 啟動相機（連續）----
 function startScan(){
+  unlockAudio();          // 在點擊當下解鎖音訊（iPhone 必要）
   beep();
   if (!KEY){ setKey(); if(!KEY){ say('請先設定通行碼'); return; } }
   if (typeof ZXing === 'undefined'){ say('掃描元件載入中，請幾秒後再按一次…'); return; }
