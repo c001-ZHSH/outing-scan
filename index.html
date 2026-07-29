@@ -137,13 +137,18 @@ function onDecode(text){
   beep();
   freezeFrame();          // 凍結畫面，給「已擷取」回饋
   if (SCANDB){
-    // 本機即時比對，0 秒出結果
-    var d=new Date(), ex=locExtract(code), st=locLookup(ex), res;
-    if (!st){ res={ ok:true, found:false, code:code, timeStr:fmtNow(d) }; }
-    else { var ban=locBan(st,d), notes=locNotes(st,d);
-      res={ ok:true, found:true, student:st, banned:ban.banned, ruleName:ban.ruleName, notes:notes, timeStr:fmtNow(d) }; }
-    handleResult(res);
-    logBeacon(code);      // 背景寫入記錄，不等待
+    try {
+      var d=new Date(), ex=locExtract(code), st=locLookup(ex), res;
+      if (!st){ res={ ok:true, found:false, code:code, timeStr:fmtNow(d) }; }
+      else { var ban=locBan(st,d), notes=locNotes(st,d);
+        res={ ok:true, found:true, student:st, banned:ban.banned, ruleName:ban.ruleName, notes:notes, timeStr:fmtNow(d) }; }
+      handleResult(res);
+      logBeacon(code);      // 背景寫入記錄，不等待
+    } catch(err){
+      var r=document.getElementById('result'); r.className='show none';
+      r.innerHTML='<div class="verdict">⚠️ 顯示錯誤</div><div class="meta">'+esc(String(err))+'</div>';
+      scheduleResume(1500);
+    }
   } else {
     // 尚未載入整包資料 → 即時查詢（備援，較慢）
     showWait();
@@ -165,11 +170,27 @@ function jsonp(params, cb){
 
 // ---- 一次載入整包資料（之後本機即時比對）----
 function loadDBMobile(cb){
-  if (!KEY){ if(cb) cb(false); return; }
+  var r = document.getElementById('result');
+  if (!KEY){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 尚未設定通行碼</div><div class="meta">請點下方「🔑 設定通行碼」</div>'; if(cb) cb(false); return; }
   jsonp({ action:'db', key:KEY }, function(data){
-    if (data && data.ok){ SCANDB = data; say('資料已載入，連續即時掃描中'); if(cb) cb(true); }
-    else if (data && data.reason==='key'){ say('通行碼錯誤，請重新設定'); setKey(); if(cb) cb(false); }
-    else { say('資料載入失敗，暫時改用即時查詢'); if(cb) cb(false); }
+    if (data && data.ok){
+      SCANDB = data;
+      var n = Object.keys(data.students||{}).length;
+      say('資料已載入（索引 '+n+' 筆），即時掃描中');
+      r.className='show ok'; r.innerHTML='<div class="verdict">✅ 已就緒</div><div class="meta">已載入資料，請開始掃描</div>';
+      setTimeout(function(){ if(!busy) r.className=''; }, 2000);
+      if(cb) cb(true);
+    }
+    else if (data && data.reason==='key'){
+      say('通行碼錯誤');
+      r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼未設定或錯誤</div><div class="meta">請先在電腦後台設定通行碼，再於手機點「🔑 設定通行碼」輸入相同的碼</div>';
+      if(cb) cb(false);
+    }
+    else {
+      say('資料載入失敗');
+      r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 資料載入失敗</div><div class="meta">'+esc((data&&data.reason)||'未知')+'，請檢查網路後重新整理</div>';
+      if(cb) cb(false);
+    }
   });
 }
 function refreshDBMobile(){ if (KEY) jsonp({ action:'db', key:KEY }, function(data){ if (data && data.ok) SCANDB = data; }); }
