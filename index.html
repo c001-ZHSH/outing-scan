@@ -58,7 +58,7 @@
 var APP_URL = "https://script.google.com/macros/s/AKfycbxNgiG6CP8SW81SpAJDFummkLbm5_0BmbVjoCeXddHzErYDzDopzEm8g6bC23rOtTJh/exec";
 
 var KEY = localStorage.getItem('scanKey') || '';
-var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null, resumeTimer=null;
+var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null, resumeTimer=null, SCANDB=null, refreshSet=false;
 
 function say(t){ document.getElementById('status').textContent = t; }
 
@@ -105,7 +105,7 @@ function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){retu
 
 function setKey(){
   var k = prompt('請輸入手機掃描通行碼（向管理者索取）：', KEY||'');
-  if (k!=null){ KEY=k.trim(); localStorage.setItem('scanKey', KEY); say('通行碼已儲存'); }
+  if (k!=null){ KEY=k.trim(); localStorage.setItem('scanKey', KEY); say('通行碼已儲存'); if (KEY) loadDBMobile(); }
 }
 
 // ---- 啟動相機（連續）----
@@ -117,9 +117,15 @@ function startScan(){
   say('正在啟動相機…');
   var p = reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } } }, 'video',
     function(result, err){ if (result) onDecode(result.getText()); });
-  if (p && p.then){ p.then(function(){ document.getElementById('startBox').style.display='none'; say('相機已開啟，連續掃描中'); })
+  if (p && p.then){ p.then(onCameraReady)
                      .catch(function(e){ say('無法開啟相機（'+((e&&e.name)||e)+'），請確認已允許相機權限，再按一次開始。'); }); }
-  else { document.getElementById('startBox').style.display='none'; say('相機已開啟，連續掃描中'); }
+  else { onCameraReady(); }
+}
+function onCameraReady(){
+  document.getElementById('startBox').style.display='none';
+  say('相機已開啟，載入資料中…');
+  loadDBMobile();
+  if (!refreshSet){ refreshSet=true; setInterval(refreshDBMobile, 180000); }   // 每 3 分鐘更新資料
 }
 
 function onDecode(text){
@@ -130,10 +136,19 @@ function onDecode(text){
   lastCode=code; lastTime=now; busy=true;
   beep();
   freezeFrame();          // 凍結畫面，給「已擷取」回饋
-  showWait();
-  jsonp({ code:code, key:KEY }, function(data){
-    handleResult(data);   // 內含 scheduleResume：顯示後恢復即時畫面
-  });
+  if (SCANDB){
+    // 本機即時比對，0 秒出結果
+    var d=new Date(), ex=locExtract(code), st=locLookup(ex), res;
+    if (!st){ res={ ok:true, found:false, code:code, timeStr:fmtNow(d) }; }
+    else { var ban=locBan(st,d), notes=locNotes(st,d);
+      res={ ok:true, found:true, student:st, banned:ban.banned, ruleName:ban.ruleName, notes:notes, timeStr:fmtNow(d) }; }
+    handleResult(res);
+    logBeacon(code);      // 背景寫入記錄，不等待
+  } else {
+    // 尚未載入整包資料 → 即時查詢（備援，較慢）
+    showWait();
+    jsonp({ code:code, key:KEY }, function(data){ handleResult(data); });
+  }
 }
 
 function jsonp(params, cb){
@@ -147,6 +162,54 @@ function jsonp(params, cb){
   document.body.appendChild(s);
   setTimeout(function(){ if(!done){ done=true; cleanup(); cb({ok:false,reason:'timeout'}); } }, 12000);
 }
+
+// ---- 一次載入整包資料（之後本機即時比對）----
+function loadDBMobile(cb){
+  if (!KEY){ if(cb) cb(false); return; }
+  jsonp({ action:'db', key:KEY }, function(data){
+    if (data && data.ok){ SCANDB = data; say('資料已載入，連續即時掃描中'); if(cb) cb(true); }
+    else if (data && data.reason==='key'){ say('通行碼錯誤，請重新設定'); setKey(); if(cb) cb(false); }
+    else { say('資料載入失敗，暫時改用即時查詢'); if(cb) cb(false); }
+  });
+}
+function refreshDBMobile(){ if (KEY) jsonp({ action:'db', key:KEY }, function(data){ if (data && data.ok) SCANDB = data; }); }
+
+// ---- 背景寫入記錄（POST，號碼在 body 不進網址）----
+function logBeacon(code){
+  try {
+    var body = 'action=log&code='+encodeURIComponent(code)+'&key='+encodeURIComponent(KEY);
+    if (navigator.sendBeacon){ navigator.sendBeacon(APP_URL, new Blob([body], {type:'application/x-www-form-urlencoded'})); }
+    else { fetch(APP_URL, { method:'POST', mode:'no-cors', keepalive:true, headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body }); }
+  } catch(e){}
+}
+
+// ---- 本機即時比對（與後端邏輯一致）----
+function pad2(n){ return ('0'+n).slice(-2); }
+function fmtNow(d){ return d.getFullYear()+'/'+pad2(d.getMonth()+1)+'/'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()); }
+function dayNum(d){ return d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate(); }
+function locExtract(raw){ var s=String(raw||'').toUpperCase().replace(/[\s\-]/g,''); var m=s.match(/[A-Z][12]\d{8}/); return {id:m?m[0]:'', clean:s}; }
+function locLookup(ex){ var S=(SCANDB&&SCANDB.students)||{};
+  if(ex.id&&S[ex.id])return S[ex.id];
+  if(ex.clean&&S[ex.clean])return S[ex.clean];
+  if(ex.clean&&S['NO_'+ex.clean])return S['NO_'+ex.clean];
+  return null; }
+function locBan(st,now){ var rules=(SCANDB&&SCANDB.rules)||[], sno=String(st.sno||''); var day=dayNum(now), min=now.getHours()*60+now.getMinutes();
+  for(var i=0;i<rules.length;i++){ var r=rules[i];
+    if(!r.enabled)continue;
+    if(r.prefix&&sno.indexOf(r.prefix)!==0)continue;
+    if(r.sd!=null&&r.sd>day)continue;
+    if(r.ed!=null&&r.ed<day)continue;
+    if(r.st!=null&&r.st>min)continue;
+    if(r.et!=null&&r.et<min)continue;
+    return {banned:true, ruleName:r.name||'禁止外出時段'};
+  } return {banned:false, ruleName:''}; }
+function locNotes(st,now){ var day=dayNum(now), out=[], seen={}; var N=(SCANDB&&SCANDB.notes)||{}, colors=(SCANDB&&SCANDB.noteColors)||{};
+  var idK=String(st.id||'').toUpperCase().replace(/\s/g,''), noK=String(st.sno||'').replace(/\s/g,'');
+  var lists=[]; if(idK&&N[idK])lists.push(N[idK]); if(noK&&N['NO_'+noK])lists.push(N['NO_'+noK]);
+  lists.forEach(function(a){a.forEach(function(rec){
+    if(rec.sd!=null&&rec.sd>day)return; if(rec.ed!=null&&rec.ed<day)return;
+    if(!seen[rec.name]){seen[rec.name]=1; out.push({name:rec.name,color:colors[rec.name]||'#f59e0b'});}
+  });}); return out; }
 
 function showWait(){ var r=document.getElementById('result'); r.className='show wait'; r.innerHTML='<div class="verdict">查詢中…</div>'; }
 function autoHide(){ if(hideTimer) clearTimeout(hideTimer); hideTimer=setTimeout(function(){ document.getElementById('result').className=''; }, 3500); }
