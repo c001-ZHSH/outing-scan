@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>學生外出掃描</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  * { box-sizing:border-box; }
+  body { font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; margin:0; background:#0f172a; color:#e2e8f0; }
+  .wrap { max-width:640px; margin:0 auto; padding:16px; text-align:center; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .sub { color:#94a3b8; font-size:13px; margin-bottom:12px; }
+  #video { width:100%; max-width:560px; aspect-ratio:3/4; background:#111; border-radius:16px; object-fit:cover; }
+  #status { margin:12px 0; font-size:15px; color:#93c5fd; min-height:22px; }
+  .btn { border:0; border-radius:14px; padding:18px 26px; font-size:20px; font-weight:800; cursor:pointer; background:#2563eb; color:#fff; }
+  .frame { position:relative; display:inline-block; width:100%; max-width:560px; }
+  .reticle { position:absolute; left:8%; right:8%; top:38%; height:24%; border:3px solid rgba(147,197,253,.9); border-radius:12px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.15) inset; }
+  .start { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55); border-radius:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎫 學生外出掃描</h1>
+  <div class="sub">將學生證／身分證的條碼對準框內，會自動辨識並登記</div>
+
+  <div class="frame">
+    <video id="video" muted playsinline autoplay></video>
+    <div class="reticle"></div>
+    <div class="start" id="startBox"><button class="btn" onclick="startScan()">▶ 開始掃描</button></div>
+  </div>
+
+  <div id="status">請按「開始掃描」並允許使用相機</div>
+</div>
+
+<script>
+// 系統（Apps Script）網址：掃到號碼後用 POST 送回這裡查詢＋登記
+var APP_URL = "https://script.google.com/a/macros/mail2.chshs.ntpc.edu.tw/s/AKfycbxxdskve4W6xyWuqmtu9guQKtSLJRZFzydgfodqqboqE-ajQ3zDq1aVya-mnI6dIqO2/exec";
+
+var reader = null, lastCode='', lastTime=0, submitting=false;
+function say(t){ document.getElementById('status').textContent = t; }
+function beep(){ try{ var C=window.__a||(window.__a=new (window.AudioContext||window.webkitAudioContext)());
+  var o=C.createOscillator(),g=C.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(C.destination);
+  g.gain.setValueAtTime(0.3,C.currentTime); o.start(); o.stop(C.currentTime+0.12);}catch(e){} }
+
+function startScan(){
+  beep();                                   // 解鎖音效（使用者手勢）
+  if (typeof ZXing === 'undefined'){ say('掃描元件載入中，請幾秒後再按一次…'); return; }
+  if (!reader) reader = new ZXing.BrowserMultiFormatReader();
+  say('正在啟動相機…');
+  var p = reader.decodeFromConstraints(
+    { video:{ facingMode:{ ideal:'environment' } } }, 'video',
+    function(result, err){ if (result) onDecode(result.getText()); }
+  );
+  if (p && p.then){
+    p.then(function(){ document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識'); })
+     .catch(function(e){ say('無法開啟相機（'+((e&&e.name)||e)+'）。請確認已允許相機權限，再按一次開始。'); });
+  } else {
+    document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識');
+  }
+}
+
+function onDecode(text){
+  var code = String(text||'').trim();
+  if (!code || submitting) return;
+  var now = Date.now();
+  if (code===lastCode && (now-lastTime)<3000) return;   // 避免同一碼連續觸發
+  lastCode=code; lastTime=now; submitting=true;
+  beep();
+  say('已掃到，登記中…');
+  try { if (reader) reader.reset(); } catch(e){}
+  submitCode(code);
+}
+
+// 用 POST 把號碼送回系統（號碼不會出現在網址列）
+function submitCode(code){
+  var f=document.createElement('form'); f.method='POST'; f.action=APP_URL; f.style.display='none';
+  var a=document.createElement('input'); a.name='code'; a.value=code; f.appendChild(a);
+  var b=document.createElement('input'); b.name='back'; b.value=location.origin+location.pathname; f.appendChild(b);
+  document.body.appendChild(f); f.submit();
+}
+
+// 回到本頁時自動嘗試啟動相機（相機權限已授權過就不會再問）
+window.addEventListener('load', function(){
+  setTimeout(function(){ try { startScanQuiet(); } catch(e){} }, 300);
+});
+function startScanQuiet(){
+  if (typeof ZXing === 'undefined' || !navigator.mediaDevices) return;
+  if (!reader) reader = new ZXing.BrowserMultiFormatReader();
+  var p = reader.decodeFromConstraints({ video:{ facingMode:{ ideal:'environment' } } }, 'video',
+    function(result, err){ if (result) onDecode(result.getText()); });
+  if (p && p.then){ p.then(function(){ document.getElementById('startBox').style.display='none'; say('請對準條碼，會自動辨識'); }).catch(function(){ /* 需手勢，保留開始鈕 */ }); }
+}
+</script>
+</body>
+</html>
