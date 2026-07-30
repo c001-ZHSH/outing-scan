@@ -38,7 +38,7 @@
 <div class="wrap">
   <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
     <h1 style="margin:2px 0;">🎫 學生外出掃描</h1>
-    <a id="adminLink" class="btn ghost" target="_blank" rel="noopener" style="font-size:12px; padding:7px 10px; text-decoration:none;">⚙️ 管理／電腦版</a>
+    <a id="adminLink" class="btn ghost" target="_top" style="font-size:12px; padding:7px 10px; text-decoration:none;">⚙️ 管理／電腦版</a>
   </div>
   <div class="sub">相機會一直開著，連續掃、不用重按</div>
 
@@ -58,8 +58,18 @@
   <div id="result"></div>
 
   <div class="footer">
+    <button class="btn ghost" onclick="toggleManual()">⌨️ 手動輸入查詢</button>
     <button class="btn ghost" onclick="goLogin()">🔐 重新登入</button>
   </div>
+
+  <div id="manualBox" style="display:none; margin-top:10px; text-align:left;">
+    <input id="manualInput" placeholder="身分證／學號／姓名／班級座號 任一"
+           style="width:100%; padding:12px; border-radius:10px; border:1px solid #334155; background:#0b1220; color:#fff; font-size:16px;">
+    <button class="btn" style="margin-top:8px; width:100%;" onclick="manualQuery()">🔍 查詢</button>
+    <div class="sub" style="margin-top:6px">查出的資料可核對身分，避免冒名；如需登記外出，點結果內的「登記」鈕。</div>
+  </div>
+  <div id="manualResults"></div>
+
   <div id="status">請按「開始掃描」並允許使用相機</div>
 </div>
 
@@ -122,12 +132,23 @@ function unlockAudio(){
 function tone(freq,dur,type,when,gain){ var C=actx(); if(!C) return;
   try { if (C.state==='suspended') C.resume(); } catch(e){}
   try{ var o=C.createOscillator(),g=C.createGain();
-  o.type=type||'sine'; o.frequency.value=freq; o.connect(g); g.connect(C.destination);
-  var t=C.currentTime+(when||0); g.gain.setValueAtTime(gain||0.3,t); o.start(t); o.stop(t+dur);}catch(e){} }
-function beep(){ tone(1000,0.08,'sine',0,0.25); }
-function soundPass(){ tone(880,0.12,'sine',0,0.3); }
+    o.type=type||'sine'; o.frequency.value=freq; o.connect(g); g.connect(C.destination);
+    var t=C.currentTime+(when||0), pk=gain||0.3;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(pk, t+0.012);          // 柔和起音
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);        // 自然衰減（更清脆好聽）
+    o.start(t); o.stop(t+dur+0.03);
+  }catch(e){} }
+function beep(){ tone(1400,0.06,'sine',0,0.18); }
+function soundPass(){ tone(1318.5,0.10,'sine',0,0.3); tone(1760,0.16,'sine',0.085,0.28); }   // 上行「叮—叮」鈴聲
 function soundWarn(){ for(var i=0;i<4;i++){ tone(240,0.16,'square',i*0.2,0.35); tone(360,0.16,'square',i*0.2+0.02,0.3);} }
-function soundNone(){ tone(160,0.35,'sawtooth',0,0.25); }
+function soundNone(){ tone(200,0.3,'triangle',0,0.25); }
+// 從別的頁面切回來時，自動恢復音效（iPhone 會在切走時暫停音訊）
+function resumeAudio(){ var C=actx(); if(C && C.state==='suspended'){ try{ C.resume(); }catch(e){} } }
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) resumeAudio(); });
+window.addEventListener('pageshow', resumeAudio);
+window.addEventListener('focus', resumeAudio);
+document.addEventListener('touchstart', resumeAudio, {passive:true});   // 任何觸碰也確保音訊已恢復
 
 function textColorFor(hex){ var c=String(hex||'').replace('#',''); if(c.length===3){c=c[0]+c[0]+c[1]+c[1]+c[2]+c[2];}
   if(c.length<6) return '#111827'; var r=parseInt(c.substr(0,2),16),g=parseInt(c.substr(2,2),16),b=parseInt(c.substr(4,2),16);
@@ -159,10 +180,9 @@ function onDecode(text){
   var code = String(text||'').trim(); if(!code) return;
   var now = Date.now();
   if (busy) return;
-  if (code===lastCode && (now-lastTime)<3500) return;   // 同一張卡短時間不重複
+  if (code===lastCode && (now-lastTime)<2000) return;   // 同一張卡短時間不重複
   lastCode=code; lastTime=now; busy=true;
-  beep();
-  freezeFrame();          // 凍結畫面，給「已擷取」回饋
+  freezeFrame();          // 凍結畫面，給「已擷取」回饋（結果的音效由 handleResult 播放）
   if (SCANDB){
     try {
       var d=new Date(), ex=locExtract(code), st=locLookup(ex), res;
@@ -273,11 +293,11 @@ function handleResult(data){
   var r=document.getElementById('result');
   if (!data || data.ok===false){
     if (data && data.reason==='auth'){ try{sessionStorage.removeItem('scanToken');}catch(e){} TOKEN=''; r.className='show ban'; r.innerHTML='<div class="verdict">🔐 需要重新登入</div><div class="meta">登入已過期，請重新登入</div><div style="margin-top:12px"><button class="btn" onclick="goLogin()">🔐 重新登入</button></div>'; soundNone(); scheduleResume(1500); return; }
-    r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); scheduleResume(1200); return;
+    r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); scheduleResume(800); return;
   }
   if (!data.found){
     r.className='show none'; r.innerHTML='<div class="verdict">❓ 查無此學生</div><div class="meta">'+esc(data.code||'')+'</div><div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
-    soundNone(); autoHide(); scheduleResume(1400); return;
+    soundNone(); autoHide(); scheduleResume(800); return;
   }
   var s=data.student;
   var sub=esc(s.class)+'　座號 '+esc(s.seat)+'　學號 '+esc(s.sno);
@@ -290,8 +310,69 @@ function handleResult(data){
     html+='</div>'; }
   html+='<div class="stamp">🕒 '+esc(data.timeStr)+'</div>';
   r.innerHTML=html;
-  if (data.banned){ soundWarn(); scheduleResume(2400); }        // 禁止者：畫面凍久一點、結果停留
-  else { soundPass(); autoHide(); scheduleResume(1200); }        // 可外出者：快速恢復、結果淡出
+  if (data.banned){ soundWarn(); scheduleResume(1500); }        // 禁止者：凍久一點方便處理
+  else { soundPass(); autoHide(); scheduleResume(500); }         // 可外出者：很快恢復，避免人多堵塞
+}
+
+// ---- 手動輸入查詢（防冒名：可用身分證／學號／姓名／班級座號查出完整資料）----
+function toggleManual(){
+  var b=document.getElementById('manualBox');
+  var show = b.style.display==='none';
+  b.style.display = show ? 'block' : 'none';
+  if (show){ document.getElementById('manualInput').focus(); }
+}
+function uniqueStudents(){
+  var S=(SCANDB&&SCANDB.students)||{}, seen={}, list=[];
+  Object.keys(S).forEach(function(k){ var st=S[k]; var key=(st.id||'')+'|'+(st.sno||'')+'|'+(st.name||''); if(!seen[key]){ seen[key]=1; list.push(st);} });
+  return list;
+}
+function manualQuery(){
+  var q=(document.getElementById('manualInput').value||'').trim();
+  var box=document.getElementById('manualResults');
+  if(!q){ box.innerHTML=''; return; }
+  if(!SCANDB){
+    if(!TOKEN){ showLoginNeeded(); return; }
+    box.innerHTML='<div class="sub">載入資料中…</div>';
+    loadDBMobile(function(ok){ if(ok) manualQuery(); });
+    return;
+  }
+  var qU=q.toUpperCase().replace(/\s/g,'');
+  var res=uniqueStudents().filter(function(st){
+    var id=String(st.id||'').toUpperCase().replace(/\s/g,'');
+    var sno=String(st.sno||'').replace(/\s/g,'');
+    var cs=(String(st.class||'')+String(st.seat||'')).replace(/\s/g,'');
+    return (id&&id===qU) || (sno&&sno===qU) || (cs&&cs===qU) || (String(st.name||'').indexOf(q)>=0);
+  });
+  if(!res.length){ box.innerHTML='<div class="result show none" style="margin-top:10px"><div class="verdict">❓ 查無符合</div></div>'; return; }
+  if(res.length===1){ showManualResult(res[0]); return; }
+  window.__manualRes=res;
+  var html='<div style="margin-top:10px">符合 '+res.length+' 筆，請點選：';
+  res.slice(0,20).forEach(function(st,i){
+    html+='<button class="btn ghost" style="display:block;width:100%;text-align:left;margin-top:6px" onclick="pickManual('+i+')">'+esc(st.name)+'　'+esc(st.class)+' '+esc(st.seat)+'　學號 '+esc(st.sno)+'</button>';
+  });
+  html+='</div>';
+  box.innerHTML=html;
+}
+function pickManual(i){ var st=(window.__manualRes||[])[i]; if(st) showManualResult(st); }
+function showManualResult(st){
+  var d=new Date(), ban=locBan(st,d), notes=locNotes(st,d);
+  var box=document.getElementById('manualResults');
+  var cls = ban.banned?'ban':'ok';
+  var html='<div class="result show '+cls+'" style="margin-top:10px">';
+  html+= ban.banned ? ('<div class="verdict">⛔ 禁止外出'+(ban.ruleName?'　<span style="font-size:16px">'+esc(ban.ruleName)+'</span>':'')+'</div>') : '<div class="verdict">✅ 可外出</div>';
+  html+='<div class="name">'+esc(st.name)+'</div><div class="meta">'+esc(st.class)+'　座號 '+esc(st.seat)+'　學號 '+esc(st.sno)+'</div>';
+  if(st.id) html+='<div class="meta" style="font-size:13px">身分證：'+esc(st.id)+'</div>';
+  if(notes.length){ html+='<div class="notes">'; notes.forEach(function(n){ var c=n.color||'#f59e0b'; html+='<span class="chip" style="background:'+c+';color:'+textColorFor(c)+'">🏷️ '+esc(n.name)+'</span>'; }); html+='</div>'; }
+  html+='<div style="margin-top:12px"><button class="btn" onclick="manualLog(this.getAttribute(\'data-c\'))" data-c="'+esc(st.id||st.sno)+'">✅ 登記此人外出</button></div>';
+  html+='</div>';
+  box.innerHTML=html;
+  if(ban.banned) soundWarn(); else soundPass();
+}
+function manualLog(code){
+  logBeacon(code);
+  var box=document.getElementById('manualResults');
+  box.innerHTML='<div class="result show ok" style="margin-top:10px"><div class="verdict">✅ 已登記外出</div></div>';
+  setTimeout(function(){ box.innerHTML=''; }, 2000);
 }
 
 // ---- 單一入口：依裝置導向（手機→相機掃描；電腦→電腦版） ----
