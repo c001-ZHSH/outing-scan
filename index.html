@@ -171,8 +171,13 @@ function startScan(){
 }
 function onCameraReady(){
   document.getElementById('startBox').style.display='none';
-  say('相機已開啟，載入資料中…');
-  loadDBMobile();
+  ensureDB();                       // 資料若尚未載入就載入
+  say('相機已開啟，連續掃描中');
+}
+// 確保整包資料已載入（登入後、掃描前、手動查詢前都可呼叫）
+function ensureDB(cb){
+  if (SCANDB){ if(cb) cb(true); return; }
+  loadDBMobile(cb);
   if (!refreshSet){ refreshSet=true; setInterval(refreshDBMobile, 180000); }   // 每 3 分鐘更新資料
 }
 
@@ -346,7 +351,7 @@ function manualQuery(){
   if(!SCANDB){
     if(!TOKEN){ showLoginNeeded(); return; }
     box.innerHTML='<div class="sub">載入資料中…</div>';
-    loadDBMobile(function(ok){ if(ok) manualQuery(); });
+    ensureDB(function(ok){ if(ok) manualQuery(); });
     return;
   }
   var qU=q.toUpperCase().replace(/\s/g,'');
@@ -410,9 +415,9 @@ function useCameraHere(){
     say('偵測到電腦，請選擇進入方式');
     return;
   }
-  // 手機：未登入先提示登入；已登入則等待按「開始掃描」
+  // 手機：未登入先提示登入；已登入則先把資料載好（手動查詢/掃描皆可用）
   if (!TOKEN){ showLoginNeeded(); say('請先用學校帳號登入'); }
-  else { say('已登入，請按「開始掃描」'); }
+  else { say('已登入，載入資料中…'); ensureDB(); }
 })();
 </script>
 </body>
