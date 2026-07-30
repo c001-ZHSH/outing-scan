@@ -326,6 +326,19 @@ function uniqueStudents(){
   Object.keys(S).forEach(function(k){ var st=S[k]; var key=(st.id||'')+'|'+(st.sno||'')+'|'+(st.name||''); if(!seen[key]){ seen[key]=1; list.push(st);} });
   return list;
 }
+// 班級座號比對：容許座號前導零、可用「班級 空格 座號」或直接相接
+function csMatch(st, qRaw){
+  var cls=String(st.class||'').replace(/\s/g,'').toUpperCase();
+  var seat=String(st.seat||'').replace(/\s/g,'');
+  if(!cls || seat==='') return false;
+  var q=String(qRaw||'').trim().toUpperCase();
+  var parts=q.split(/\s+/);
+  if(parts.length>=2){ return parts[0]===cls && parseInt(parts[parts.length-1],10)===parseInt(seat,10); }
+  var qs=q.replace(/\s/g,'');
+  if((cls+seat)===qs) return true;
+  if(qs.indexOf(cls)===0){ var rest=qs.slice(cls.length); if(rest!=='' && parseInt(rest,10)===parseInt(seat,10)) return true; }
+  return false;
+}
 function manualQuery(){
   var q=(document.getElementById('manualInput').value||'').trim();
   var box=document.getElementById('manualResults');
@@ -340,8 +353,7 @@ function manualQuery(){
   var res=uniqueStudents().filter(function(st){
     var id=String(st.id||'').toUpperCase().replace(/\s/g,'');
     var sno=String(st.sno||'').replace(/\s/g,'');
-    var cs=(String(st.class||'')+String(st.seat||'')).replace(/\s/g,'');
-    return (id&&id===qU) || (sno&&sno===qU) || (cs&&cs===qU) || (String(st.name||'').indexOf(q)>=0);
+    return (id&&id===qU) || (sno&&sno===qU) || csMatch(st,q) || (String(st.name||'').indexOf(q)>=0);
   });
   if(!res.length){ box.innerHTML='<div class="result show none" style="margin-top:10px"><div class="verdict">❓ 查無符合</div></div>'; return; }
   if(res.length===1){ showManualResult(res[0]); return; }
