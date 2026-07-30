@@ -58,7 +58,7 @@
   <div id="result"></div>
 
   <div class="footer">
-    <button class="btn ghost" onclick="setKey()">🔑 設定通行碼</button>
+    <button class="btn ghost" onclick="goLogin()">🔐 重新登入</button>
   </div>
   <div id="status">請按「開始掃描」並允許使用相機</div>
 </div>
@@ -69,8 +69,19 @@ var APP_URL = "https://script.google.com/macros/s/AKfycbxNgiG6CP8SW81SpAJDFummkL
 // 電腦版／管理後台（Google 登入）；透過帳號選擇器確保挑到學校帳號
 var APPSCRIPT_URL = "https://script.google.com/a/macros/mail2.chshs.ntpc.edu.tw/s/AKfycbxxdskve4W6xyWuqmtu9guQKtSLJRZFzydgfodqqboqE-ajQ3zDq1aVya-mnI6dIqO2/exec";
 var ADMIN_URL = "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(APPSCRIPT_URL);
+// 登入取得臨時權杖：導到網域端點 ?action=mobiletoken（Google 驗證），回來時網址帶 #t=權杖
+var LOGIN_URL = "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(APPSCRIPT_URL + "?action=mobiletoken");
 
-var KEY = localStorage.getItem('scanKey') || '';
+// 從網址 #t= 取得權杖，存進 sessionStorage（關掉分頁即消失），並把權杖從網址移除
+var TOKEN = (function(){
+  var m = (location.hash||'').match(/[#&]t=([^&]+)/);
+  if (m){
+    try { sessionStorage.setItem('scanToken', decodeURIComponent(m[1])); } catch(e){}
+    try { history.replaceState(null,'',location.pathname+location.search); } catch(e){ location.hash=''; }
+  }
+  try { return sessionStorage.getItem('scanToken') || ''; } catch(e){ return ''; }
+})();
+function goLogin(){ location.href = LOGIN_URL; }
 var reader = null, busy=false, lastCode='', lastTime=0, hideTimer=null, resumeTimer=null, SCANDB=null, refreshSet=false;
 
 function say(t){ document.getElementById('status').textContent = t; }
@@ -123,16 +134,11 @@ function textColorFor(hex){ var c=String(hex||'').replace('#',''); if(c.length==
   return ((0.299*r+0.587*g+0.114*b)/255)>0.62 ? '#111827' : '#ffffff'; }
 function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
-function setKey(){
-  var k = prompt('請輸入手機掃描通行碼（向管理者索取）：', KEY||'');
-  if (k!=null){ KEY=k.trim(); localStorage.setItem('scanKey', KEY); say('通行碼已儲存'); if (KEY) loadDBMobile(); }
-}
-
 // ---- 啟動相機（連續）----
 function startScan(){
   unlockAudio();          // 在點擊當下解鎖音訊（iPhone 必要）
   beep();
-  if (!KEY){ setKey(); if(!KEY){ say('請先設定通行碼'); return; } }
+  if (!TOKEN){ goLogin(); return; }   // 未登入 → 先用學校帳號登入取得權杖
   if (typeof ZXing === 'undefined'){ say('掃描元件載入中，請幾秒後再按一次…'); return; }
   if (!reader) reader = makeReader();
   say('正在啟動相機…');
@@ -173,7 +179,7 @@ function onDecode(text){
   } else {
     // 尚未載入整包資料 → 即時查詢（備援，較慢）
     showWait();
-    jsonp({ code:code, key:KEY }, function(data){ handleResult(data); });
+    jsonp({ code:code, token:TOKEN }, function(data){ handleResult(data); });
   }
 }
 
@@ -192,8 +198,8 @@ function jsonp(params, cb){
 // ---- 一次載入整包資料（之後本機即時比對）----
 function loadDBMobile(cb){
   var r = document.getElementById('result');
-  if (!KEY){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 尚未設定通行碼</div><div class="meta">請點下方「🔑 設定通行碼」</div>'; if(cb) cb(false); return; }
-  jsonp({ action:'db', key:KEY }, function(data){
+  if (!TOKEN){ showLoginNeeded(); if(cb) cb(false); return; }
+  jsonp({ action:'db', token:TOKEN }, function(data){
     if (data && data.ok){
       SCANDB = data;
       var n = Object.keys(data.students||{}).length;
@@ -202,9 +208,10 @@ function loadDBMobile(cb){
       setTimeout(function(){ if(!busy) r.className=''; }, 2000);
       if(cb) cb(true);
     }
-    else if (data && data.reason==='key'){
-      say('通行碼錯誤');
-      r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼未設定或錯誤</div><div class="meta">請先在電腦後台設定通行碼，再於手機點「🔑 設定通行碼」輸入相同的碼</div>';
+    else if (data && data.reason==='auth'){
+      try { sessionStorage.removeItem('scanToken'); } catch(e){} TOKEN='';
+      say('登入已過期');
+      r.className='show ban'; r.innerHTML='<div class="verdict">🔐 需要重新登入</div><div class="meta">登入已過期或無權限，請重新用學校帳號登入</div><div style="margin-top:12px"><button class="btn" onclick="goLogin()">🔐 重新登入</button></div>';
       if(cb) cb(false);
     }
     else {
@@ -214,12 +221,18 @@ function loadDBMobile(cb){
     }
   });
 }
-function refreshDBMobile(){ if (KEY) jsonp({ action:'db', key:KEY }, function(data){ if (data && data.ok) SCANDB = data; }); }
+function refreshDBMobile(){ if (TOKEN) jsonp({ action:'db', token:TOKEN }, function(data){ if (data && data.ok) SCANDB = data; }); }
+
+function showLoginNeeded(){
+  var r=document.getElementById('result');
+  r.className='show ban';
+  r.innerHTML='<div class="verdict">🔐 請先登入</div><div class="meta">請用學校 Google 帳號登入後開始掃描</div><div style="margin-top:12px"><button class="btn" onclick="goLogin()">🔐 用學校帳號登入</button></div>';
+}
 
 // ---- 背景寫入記錄（POST，號碼在 body 不進網址）----
 function logBeacon(code){
   try {
-    var body = 'action=log&code='+encodeURIComponent(code)+'&key='+encodeURIComponent(KEY);
+    var body = 'action=log&code='+encodeURIComponent(code)+'&token='+encodeURIComponent(TOKEN);
     if (navigator.sendBeacon){ navigator.sendBeacon(APP_URL, new Blob([body], {type:'application/x-www-form-urlencoded'})); }
     else { fetch(APP_URL, { method:'POST', mode:'no-cors', keepalive:true, headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body }); }
   } catch(e){}
@@ -259,7 +272,7 @@ function autoHide(){ if(hideTimer) clearTimeout(hideTimer); hideTimer=setTimeout
 function handleResult(data){
   var r=document.getElementById('result');
   if (!data || data.ok===false){
-    if (data && data.reason==='key'){ r.className='show ban'; r.innerHTML='<div class="verdict">🔑 通行碼錯誤</div><div class="meta">請重新設定通行碼</div>'; soundNone(); scheduleResume(1500); setTimeout(setKey, 400); return; }
+    if (data && data.reason==='auth'){ try{sessionStorage.removeItem('scanToken');}catch(e){} TOKEN=''; r.className='show ban'; r.innerHTML='<div class="verdict">🔐 需要重新登入</div><div class="meta">登入已過期，請重新登入</div><div style="margin-top:12px"><button class="btn" onclick="goLogin()">🔐 重新登入</button></div>'; soundNone(); scheduleResume(1500); return; }
     r.className='show none'; r.innerHTML='<div class="verdict">⚠️ 連線失敗</div><div class="meta">請再掃一次</div>'; soundNone(); autoHide(); scheduleResume(1200); return;
   }
   if (!data.found){
@@ -302,7 +315,11 @@ function useCameraHere(){
     document.getElementById('result').style.display='none';
     document.querySelector('.footer').style.display='none';
     say('偵測到電腦，請選擇進入方式');
+    return;
   }
+  // 手機：未登入先提示登入；已登入則等待按「開始掃描」
+  if (!TOKEN){ showLoginNeeded(); say('請先用學校帳號登入'); }
+  else { say('已登入，請按「開始掃描」'); }
 })();
 </script>
 </body>
